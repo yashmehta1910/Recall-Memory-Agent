@@ -1,5 +1,4 @@
 """Graphs that extract memories on a schedule."""
-
 import asyncio
 import logging
 from datetime import datetime
@@ -46,40 +45,60 @@ async def call_model(state: State, runtime: Runtime[Context]) -> dict:
     # Load the chat model from the runtime context
     llm = utils.load_chat_model(model)
 
-    # Invoke the language model with the prepared prompt and tools
-    # "bind_tools" gives the LLM the JSON schema for all tools in the list so it knows how
-    # to use them.
-    msg = await llm.bind_tools([tools.upsert_memory]).ainvoke(
+    msg = await llm.bind_tools([
+        tools.upsert_memory,
+        tools.play_music_on_youtube,
+        tools.get_weather,
+        tools.web_search,
+        tools.tell_joke,
+        tools.add_reminder,
+        tools.list_reminders,
+        tools.get_news,
+        tools.convert_currency,
+    ]).ainvoke(
         [{"role": "system", "content": sys}, *state.messages]
     )
     return {"messages": [msg]}
 
-
 async def store_memory(state: State, runtime: Runtime[Context]):
-    # Extract tool calls from the last message
     tool_calls = getattr(state.messages[-1], "tool_calls", [])
 
-    # Concurrently execute all upsert_memory calls
-    saved_memories = await asyncio.gather(
-        *(
-            tools.upsert_memory(
-                **tc["args"],
-                user_id=runtime.context.user_id,
-                store=cast(BaseStore, runtime.store),
-            )
-            for tc in tool_calls
-        )
-    )
+    async def run_tool(tc):
+        name = tc["name"]
+        args = tc["args"]
+        user_id = runtime.context.user_id
+        store = cast(BaseStore, runtime.store)
 
-    # Format the results of memory storage operations
-    # This provides confirmation to the model that the actions it took were completed
+        if name == "upsert_memory":
+            return await tools.upsert_memory(**args, user_id=user_id, store=store)
+        elif name == "add_reminder":
+            return await tools.add_reminder(**args, user_id=user_id, store=store)
+        elif name == "list_reminders":
+            return await tools.list_reminders(user_id=user_id, store=store)
+        elif name == "play_music_on_youtube":
+            return await asyncio.to_thread(tools.play_music_on_youtube, **args)
+        elif name == "get_weather":
+            return await asyncio.to_thread(tools.get_weather, **args)
+        elif name == "web_search":
+            return await asyncio.to_thread(tools.web_search, **args)
+        elif name == "tell_joke":
+            return await asyncio.to_thread(tools.tell_joke)
+        elif name == "get_news":
+            return await asyncio.to_thread(tools.get_news, **args)
+        elif name == "convert_currency":
+            return await asyncio.to_thread(tools.convert_currency, **args)
+        else:
+            return f"Unknown tool: {name}"
+
+    saved_results = await asyncio.gather(*(run_tool(tc) for tc in tool_calls))
+
     results = [
         {
             "role": "tool",
-            "content": mem,
+            "content": result,
             "tool_call_id": tc["id"],
         }
-        for tc, mem in zip(tool_calls, saved_memories)
+        for tc, result in zip(tool_calls, saved_results)
     ]
     return {"messages": results}
 

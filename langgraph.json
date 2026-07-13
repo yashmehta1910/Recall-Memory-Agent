@@ -8,8 +8,8 @@
     "dependencies": ["."],
     "store": {
         "index": {
-            "dims": 1536,
-            "embed": "openai:text-embedding-3-small"
+            "dims": 768,
+            "embed": "google_genai:models/gemini-embedding-001"
         }
     }
 }
